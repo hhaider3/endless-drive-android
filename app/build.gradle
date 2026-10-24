@@ -1,0 +1,50 @@
+plugins {
+    id 'com.android.application'
+}
+
+// The game itself (index.html, its modules, models and vendor files) is
+// copied from its own repository at build time, so the app always carries
+// the current game and runs offline. The Blender sources stay behind.
+def gameDir = rootProject.file(project.findProperty('gameDir') ?: '../test1')
+def gameAssets = layout.buildDirectory.dir('generated/gameAssets').get().asFile
+
+def copyGame = tasks.register('copyGame', Sync) {
+    doFirst {
+        if (!new File(gameDir, 'index.html').exists()) throw new GradleException("No game at $gameDir: set gameDir in gradle.properties")
+    }
+    from(gameDir) {
+        include 'index.html', '*.mjs', 'style.css', 'manifest.webmanifest', 'vendor/**', 'assets/**'
+        exclude '**/*.blend', '**/*.blend1'
+    }
+    into new File(gameAssets, 'game')
+}
+
+android {
+    namespace 'com.endlessdrive.app'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.endlessdrive.app'
+        minSdk 30          // Android 11: per-window display mode (refresh rate) requests
+        targetSdk 36
+        versionCode 1
+        versionName '1.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main.assets.srcDirs += gameAssets
+    }
+}
+
+tasks.named('preBuild') { dependsOn copyGame }
