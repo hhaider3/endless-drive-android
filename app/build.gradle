@@ -27,8 +27,8 @@ android {
         applicationId 'com.endlessdrive.app'
         minSdk 30          // Android 11: per-window display mode (refresh rate) requests
         targetSdk 36
-        versionCode 1
-        versionName '1.0'
+        versionCode 2
+        versionName '1.1'
     }
 
     buildTypes {

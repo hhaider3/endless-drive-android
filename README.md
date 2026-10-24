@@ -13,6 +13,12 @@ on many phones).
 - On start it picks the display's fastest mode at the current resolution
   (`preferredDisplayModeId`), and on Android 15+ also asks for the high frame
   rate category, so a variable-rate panel can run anywhere from 120 to 165 Hz.
+- OnePlus phones give their top rate (165 Hz on the OnePlus 15) only to apps
+  they list as games, and cap the rest at 120 Hz. On those phones the app also
+  asks OnePlus's own screen-mode service for 165 Hz for itself while the game is
+  in front, and withdraws it when the game leaves. That service is undocumented
+  (the approach comes from [165 Armer](https://github.com/tryptz/Force165hz-Oneplus-15-NoRoot)),
+  so a firmware update may close it; the app then runs at 120 Hz.
 - Landscape only, full screen, screen kept on. Back pauses a drive; on the menu
   it sends the game to the background.
 

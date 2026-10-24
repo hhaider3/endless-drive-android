@@ -79,7 +79,7 @@ public class MainActivity extends Activity {
         for (Display.Mode mode : display.getSupportedModes()) {
             if (mode.getPhysicalWidth() == current.getPhysicalWidth() && mode.getPhysicalHeight() == current.getPhysicalHeight() && mode.getRefreshRate() > fastest.getRefreshRate()) fastest = mode;
         }
-        attributes.preferredDisplayModeId = fastest.getModeId();
+        attributes.preferredDisplayModeId = fastest.getModeId(); // (OnePlus caps this at 120 Hz for non-games: see OnePlusRefresh)
         attributes.preferredRefreshRate = fastest.getRefreshRate();
     }
 
@@ -107,11 +107,13 @@ public class MainActivity extends Activity {
         if (hasFocus) hideSystemBars();
     }
 
+    // OnePlus phones only give their listed games the top rate: ask for it
+    // while the game is in front, and give it back when it leaves.
     @Override
-    protected void onResume() { super.onResume(); web.onResume(); }
+    protected void onResume() { super.onResume(); web.onResume(); OnePlusRefresh.request(getPackageName(), OnePlusRefresh.RATE_165); }
 
     @Override
-    protected void onPause() { web.onPause(); super.onPause(); } // the game pauses itself when hidden
+    protected void onPause() { OnePlusRefresh.request(getPackageName(), OnePlusRefresh.RATE_NONE); web.onPause(); super.onPause(); } // the game pauses itself when hidden
 
     @Override
     protected void onSaveInstanceState(Bundle state) { super.onSaveInstanceState(state); web.saveState(state); }
