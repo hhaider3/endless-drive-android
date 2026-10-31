@@ -2,6 +2,7 @@ package com.endlessdrive.app;
 
 import android.app.Activity;
 import android.content.pm.ApplicationInfo;
+import android.content.res.AssetFileDescriptor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -23,9 +24,15 @@ import android.window.OnBackInvokedDispatcher;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Endless Drive in a full-screen WebView. The game is bundled in the app's
@@ -39,6 +46,7 @@ import java.util.Collections;
 public class MainActivity extends Activity {
     private static final String HOST = "appassets.androidplatform.net";
     private static final String START = "https://" + HOST + "/index.html";
+    private static final Pattern RANGE = Pattern.compile("bytes=(\\d*)-(\\d*)");
     private WebView web;
     private GameUpdater updater;
     private final GameUpdater.Listener onDownloaded = () -> runOnUiThread(this::updateWhenIdle);
@@ -146,7 +154,12 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() { updater.clearListener(onDownloaded); web.destroy(); super.onDestroy(); }
 
-    /** Serves the bundled game at https://appassets.androidplatform.net/; anything else (web fonts) goes to the network. */
+    /**
+     * Serves the bundled game at https://appassets.androidplatform.net/; anything else (web fonts) goes to the network.
+     * Answers byte ranges as a web server does: the music streams through <audio>, which asks for the part
+     * of a track it needs whenever it seeks or has let go of what it buffered, and given the whole file
+     * from the start instead it stalls (the longest track, first).
+     */
     private final class GameClient extends WebViewClient {
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
@@ -155,12 +168,36 @@ public class MainActivity extends Activity {
             String path = url.getPath();
             if (path == null || path.isEmpty() || path.equals("/")) path = "/index.html";
             if (path.contains("..")) return missing();
-            String mime = mimeOf(path);
+            String mime = mimeOf(path), encoding = mime.startsWith("text/") || mime.contains("json") ? "utf-8" : null;
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Cache-Control", "no-cache");
             try {
+                long length = lengthOf(path);
+                if (length < 0) return new WebResourceResponse(mime, encoding, 200, "OK", headers, open(path));
+                headers.put("Accept-Ranges", "bytes");
+                Matcher range = RANGE.matcher(rangeOf(request));
+                if (!range.matches() || range.group(1).isEmpty() && range.group(2).isEmpty()) {
+                    headers.put("Content-Length", Long.toString(length));
+                    return new WebResourceResponse(mime, encoding, 200, "OK", headers, open(path));
+                }
+                long first, last;
+                if (range.group(1).isEmpty()) { // the last n bytes
+                    first = Math.max(0, length - Long.parseLong(range.group(2)));
+                    last = length - 1;
+                } else {
+                    first = Long.parseLong(range.group(1));
+                    last = range.group(2).isEmpty() ? length - 1 : Math.min(length - 1, Long.parseLong(range.group(2)));
+                }
+                if (first >= length || first > last) {
+                    headers.put("Content-Range", "bytes */" + length);
+                    return new WebResourceResponse(mime, encoding, 416, "Range Not Satisfiable", headers, new ByteArrayInputStream(new byte[0]));
+                }
                 InputStream data = open(path);
-                return new WebResourceResponse(mime, mime.startsWith("text/") || mime.contains("json") ? "utf-8" : null, 200, "OK",
-                    Collections.singletonMap("Cache-Control", "no-cache"), data);
-            } catch (IOException e) {
+                skipFully(data, first);
+                headers.put("Content-Range", "bytes " + first + "-" + last + "/" + length);
+                headers.put("Content-Length", Long.toString(last - first + 1));
+                return new WebResourceResponse(mime, encoding, 206, "Partial Content", headers, new Limited(data, last - first + 1));
+            } catch (IOException | NumberFormatException e) {
                 return missing();
             }
         }
@@ -179,9 +216,75 @@ public class MainActivity extends Activity {
             return new FileInputStream(file);
         }
 
+        /** The file's size, or -1 for a bundled file packed compressed (not media), whose size isn't known without reading it. */
+        private long lengthOf(String path) throws IOException {
+            File root = gameDir;
+            if (root != null) {
+                File file = new File(root, path);
+                if (!file.isFile()) throw new IOException("not in the game: " + path);
+                return file.length();
+            }
+            try (AssetFileDescriptor fd = getAssets().openFd("game" + path)) {
+                return fd.getLength();
+            } catch (FileNotFoundException e) { // compressed, or missing (open() tells which)
+                return -1;
+            }
+        }
+
         private WebResourceResponse missing() {
             return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found", Collections.emptyMap(), new ByteArrayInputStream(new byte[0]));
         }
+    }
+
+    private static String rangeOf(WebResourceRequest request) {
+        for (Map.Entry<String, String> header : request.getRequestHeaders().entrySet()) {
+            if ("range".equalsIgnoreCase(header.getKey())) return header.getValue().trim();
+        }
+        return "";
+    }
+
+    private static void skipFully(InputStream in, long count) throws IOException {
+        while (count > 0) {
+            long skipped = in.skip(count);
+            if (skipped <= 0) {
+                if (in.read() < 0) throw new IOException("past the end");
+                skipped = 1;
+            }
+            count -= skipped;
+        }
+    }
+
+    /** The first {@code left} bytes of a stream. */
+    private static final class Limited extends FilterInputStream {
+        private long left;
+
+        Limited(InputStream in, long left) { super(in); this.left = left; }
+
+        @Override
+        public int read() throws IOException {
+            if (left <= 0) return -1;
+            int b = super.read();
+            if (b >= 0) left--;
+            return b;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int count) throws IOException {
+            if (left <= 0) return -1;
+            int n = super.read(buffer, offset, (int) Math.min(count, left));
+            if (n > 0) left -= n;
+            return n;
+        }
+
+        @Override
+        public long skip(long count) throws IOException {
+            long n = super.skip(Math.min(count, left));
+            left -= n;
+            return n;
+        }
+
+        @Override
+        public int available() throws IOException { return (int) Math.min(super.available(), left); }
     }
 
     /** Module scripts must arrive as JavaScript, or the browser refuses them. */
@@ -196,6 +299,7 @@ public class MainActivity extends Activity {
         if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
         if (name.endsWith(".svg")) return "image/svg+xml";
         if (name.endsWith(".glb")) return "model/gltf-binary";
+        if (name.endsWith(".m4a")) return "audio/mp4";
         return "application/octet-stream";
     }
 }
