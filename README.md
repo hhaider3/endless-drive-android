@@ -2,7 +2,7 @@
 
 [Endless Drive](https://github.com/hhaider3/project-magellan), the web game, in a full-screen Android app. The only reason
 for the app over the browser: it asks the display for its fastest refresh rate,
-so a 120–165 Hz phone can run the game above 60 fps (Chrome keeps pages at 60 Hz
+so a 120 Hz phone can run the game above 60 fps (Chrome keeps pages at 60 Hz
 on many phones).
 
 - The game is bundled: each build copies it from a checkout of the game
@@ -12,13 +12,20 @@ on many phones).
   modules, module workers and import map load as they do from a web server.
 - On start it picks the display's fastest mode at the current resolution
   (`preferredDisplayModeId`), and on Android 15+ also asks for the high frame
-  rate category, so a variable-rate panel can run anywhere from 120 to 165 Hz.
-- OnePlus phones give their top rate (165 Hz on the OnePlus 15) only to apps
-  they list as games, and cap the rest at 120 Hz. On those phones the app also
-  asks OnePlus's own screen-mode service for 165 Hz for itself while the game is
-  in front, and withdraws it when the game leaves. That service is undocumented
-  (the approach comes from [165 Armer](https://github.com/tryptz/Force165hz-Oneplus-15-NoRoot)),
-  so a firmware update may close it; the app then runs at 120 Hz.
+  rate category, so a variable-rate panel can run at its top rate. (Some phones,
+  OnePlus among them, keep the rate for apps they list as games at a lower cap
+  for everything else; the app can't change that.)
+- The game updates itself. When the app starts or comes back to the front it asks
+  GitHub for the newest commit on the game repository's `main` branch; if that is
+  not what the app is running, it downloads the game files of that commit in the
+  background (about 40 MB, only on an unmetered network such as Wi-Fi, and at
+  most one check every 15 minutes). The new version loads right away if you
+  haven't started a drive yet, with a "Game updated" toast; otherwise the next
+  time the app starts, so a drive (even a paused one) is never lost. Only a
+  newer commit replaces the game: a build bundling a game commit that isn't on
+  GitHub yet keeps it. Only the game updates
+  this way; changes to the app itself still need a new APK. Installing a new APK
+  drops any downloaded game and starts from the one bundled in it.
 - Landscape only, full screen, screen kept on. Back pauses a drive; on the menu
   it sends the game to the background.
 
